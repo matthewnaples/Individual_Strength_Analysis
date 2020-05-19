@@ -688,8 +688,8 @@ sessionAvgs<- devBlockAll %>% filter(group %in% c("DLMovement","horizontalPress"
 ```{r,echo=F}
 #delta e1rm facet by exercise color by block
 pe1rm2<-ggplot(weeklyStatsAllBlocks,aes(x=week,y=e1rm)) + geom_line(aes(color=as.factor(block)))+geom_point(aes(color=as.factor(block))) + facet_wrap(~exercise,scales = "free",ncol=2) + scale_y_continuous(limits = c(300,550))
-pe1rm2
-#plotly::ggplotly(pe1rm2) 
+#pe1rm2
+plotly::ggplotly(pe1rm2) 
 ```
 
 ```{r,echo=F}

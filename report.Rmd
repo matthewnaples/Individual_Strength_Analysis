@@ -1,0 +1,732 @@
+---
+title: "Emergent Strategies for Strength Development"
+author: Matt Naples
+date: "4/24/2019"
+output:
+  html_document: default
+---
+```{r, include = F}
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(ggplot2)
+library(ggridges)
+library(scales)
+library(stringr)
+library(lubridate)
+library(scales)
+library(leaps)
+library(TSA)
+library(tseries)
+library(astsa)
+```
+
+
+
+# Our Vision (at the individual level)
+
+We want athletes and coaches to be able to analyze their training in a way that allows them to experiment and iteratively alter training parameters for future training blocks. An example analysis will illustrate how we want our clients to be able to interact with their data and make actionable changes to training during a single training session, after a training micro-cycle(~1-2weeks of training), meso-cycle(~1-3 months of training, also called a "block"), and at the macro-cycle level (~ >3-6months, also called a "meta-block"). 
+ 
+
+## Using data at the week's level. 
+
+It's generally not a good idea to take one week's data in an attempt to describe progress, as performance fluctuations (or lack thereof) within the week have a degree of randomness, and performance over the span of one week does not dictate the trajectory of the program as a whole (as we'll come to see soon). Assessing weekly adherence to a trianing protocol is a better use for data on a time-scale of ~7-14 days (as opposed to assessing progress). You'd be surprised at how often people veer off program, [this sample](https://startingstrength.com/article/wndtp) of 324 individuals showed that about 5% (17 participants) were even close to adhering to the program fully. For example, if one's program calls for 5 sets of 5 at RPE 7 on the squat 2x per week (5x5 @ 7 x 2), 4x10 @ 7 x 2 on bench, 3x5 @ 8 x 2 on deadlift, and 4x5 @ 8 x 2 on overhead press, we can compare expected and actual outcomes in a weekly summary...
+
+```{r,echo=F}
+ex<-data.frame(exercise =c("squat","bench", "deadlift", "overhead press"), target_reps = c(50,70,30,40), reps_performed=c(50,60,30,28), avg_rpe=c(7,9,8,7))
+exLong<-ex %>% gather(key="metric",value="reps",c(target_reps,reps_performed))
+ggplot(exLong,aes(exercise,reps))+geom_bar(stat="identity",position = position_dodge(width = -0.5),aes(fill=metric))
+```
+
+
+
+
+
+```{r,include=F}
+trainingLog <- read.csv("data/trainingLog copy.csv")
+trainingLog <- tibble::as_tibble(trainingLog)
+trainingLog
+```
+
+```{r,include=F}
+#1. make sure the dates are utilized as dates.
+trainingLog$date <-mdy(trainingLog$date)
+trainingLog
+
+# the dates are now in ymd format and seen as a date, where blanks are NA
+
+# fill the NA dates...
+trainingLog <- trainingLog %>% fill(date)
+
+#2. unite the columns that specify an exercise
+#since i didn't use equipment 3, i'll get rid of it...
+trainingLog$equipment3 <- NULL
+      ##trainingLog <- trainingLog %>% mutate_if(is.factor, funs(na_if(.,""))) 
+trainingLog <- trainingLog %>% unite("exercise",2:9, sep= " ")
+
+#now I've got the exercises identified uniquely. Next, forward fill by setting all blank strings to NA, then using fill fn
+trainingLog$exercise<- replace(trainingLog$exercise,which(trainingLog$exercise == "       "), NA)
+trainingLog<- trainingLog %>% fill(exercise)
+#now the data is forwardly filled, but there's annoying whitespace that needs trimming
+
+## this will trim all the spaces with >1 space to just 1 space
+trainingLog$exercise <- gsub("\\s+", " ", trainingLog$exercise) 
+
+#this will trim all leading and trailing whitespace
+trainingLog$exercise <- trimws(trainingLog$exercise) 
+
+## now make the remaining values with blank strings NA so they're easier to deal with when plotting...
+trainingLog <- trainingLog %>% mutate_if(is.factor, funs(na_if(.,""))) 
+
+## replacing bogus RPE values (ones not conforming to the .5 interval system or <6)
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "9.4","9.5")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == ".",NA)
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "6.4","6.5")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "9.75","10")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "8.6","9.5")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "19","10")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "7.6","7.5")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "75","7.5")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "<5","<6")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "5","<6")
+trainingLog$RPE<- replace(trainingLog$RPE,trainingLog$RPE == "5.5","<6")
+
+#changing rpe to character vector
+trainingLog$RPE<- as.character(trainingLog$RPE)
+
+
+
+```
+
+```{r,include=F}
+# need to cluster the exercises into the following groups:
+  #squating Movement, horizontal push, vertical push, deadlift movement, upper back, hamstring/glute isolation, tricep isolation
+#squat movement - contains 'squat' or 'lunge'
+squatIds <- c("squat","lunge")
+#horiz press - contains 'bench press' | 'dip' | 'floor press' | 'spoto'
+horizontalPressIds <- c("bench press", "dip", "floor press","spoto")
+# vertical push - contains 'OHP'| 'ohp' | 'z-press' |'arnold press'
+verticalPressIds <- c("ohp", "z-press", "arnold press")
+#deadlift movement - contains 'DL'
+DLIds <- c("dl","block pull", "rack pull")
+# upper back - contains 'lat' | 'pulldown' |'row' | 'chinup' | 'pullup' 
+upperBackIds <- c("lat","pulldown","row","chinup","pullup")
+# hamstring/glute iso - contains 'ghr' | 'ham curl' | 'hip thrust' | 
+hamstringIds<-c("ghr","ham curl")
+gluteIds <- c("hip thrust")
+# tricep iso - contains "OH tri" | "skullcrusher" 
+tricepIds <- c("oh tri","skullcrusher")
+ex <- str_to_lower(trainingLog$exercise)
+trainingLog<- trainingLog %>% mutate(
+  group = ifelse(str_detect(ex,horizontalPressIds[1]),"horizontalPress",
+                ifelse(str_detect(ex,horizontalPressIds[2]),"horizontalPress",
+                 ifelse(str_detect(ex,horizontalPressIds[3]),"horizontalPress",
+                 ifelse(str_detect(ex,horizontalPressIds[4]),"horizontalPress",
+                 ifelse(str_detect(ex,verticalPressIds[1]),"verticalPress",
+                 ifelse( str_detect(ex,verticalPressIds[2]),"verticalPress",
+                 ifelse(str_detect(ex,verticalPressIds[2]),"verticalPress",
+                 ifelse(str_detect(ex,verticalPressIds[1]),"verticalPress",
+                 ifelse(str_detect(ex,verticalPressIds[2]),"verticalPress",
+                 ifelse(str_detect(ex,verticalPressIds[3]),"verticalPress",
+                 ifelse(str_detect(ex,verticalPressIds[1]),"verticalPress",
+                 ifelse(str_detect(ex,DLIds[1]),"DLMovement",
+                 ifelse(str_detect(ex,DLIds[2]),"DLMovement",
+                 ifelse(str_detect(ex,DLIds[3]),"DLMovement",
+                 ifelse(str_detect(ex,upperBackIds[1]),"upperBack",
+                 ifelse(str_detect(ex,upperBackIds[2]),"upperBack",
+                 ifelse(str_detect(ex,upperBackIds[3]),"upperBack",
+                 ifelse(str_detect(ex,upperBackIds[4]),"upperBack",
+                 ifelse(str_detect(ex,upperBackIds[5]),"upperBack",
+                 ifelse(str_detect(ex,hamstringIds[1]),"hamstringIsolation",
+                 ifelse(str_detect(ex,hamstringIds[2]),"hamstringIsolation",
+                 ifelse(str_detect(ex,gluteIds[1]),"gluteIsolation",
+                 ifelse(str_detect(ex,squatIds[1]),"squatMovement",
+                 ifelse(str_detect(ex,squatIds[2]),"squatMovement",
+                 ifelse(str_detect(ex,tricepIds[1]),"tricepIsolation",
+                 ifelse(str_detect(ex,tricepIds[2]),"tricepIsolation",NA))))))))))))))))))))))))))
+)
+
+```
+
+
+
+```{r, warning=FALSE,include= F}
+##estimated 1rm
+rpeChart<- readr::read_csv("data/rpeChart copy.csv")
+rpeChart<- rpeChart[1:7]
+names(rpeChart)[1] <- "RPE"
+rpeChart <- rpeChart %>% gather(2:7, key = "reps",value =  "percentages")
+rpeChart$reps <- as.integer(rpeChart$reps)
+rpeChart$RPE <- as.character(rpeChart$RPE)
+# rpeChart <- rpeChart[-which(rpeChart$percentages<.82),]
+
+e1rm<-c()
+for(i in 1:nrow(trainingLog)){
+  if(trainingLog$RPE[i] %in% rpeChart$RPE & trainingLog$reps[i] %in% rpeChart$reps 
+    #why doesn't this condition work? & (subset(rpeChart,RPE==trainingLog$RPE[i] &reps==trainingLog$reps[i])[,"percentages",drop=T]) >.815 
+    ){
+    e1rm<-c(e1rm,
+trainingLog$weight[i]/(subset(rpeChart,RPE==trainingLog$RPE[i] &reps==trainingLog$reps[i])[,"percentages",drop=T]))
+  }
+  else{
+    e1rm<-c(e1rm,NA)
+  }
+}
+trainingLog <- tibble::add_column(trainingLog,e1rm = e1rm)
+rm(e1rm)
+```
+
+```{r,include=F}
+#1.) relative stress index part 1 (impact of a set on successive set)
+delta1rmPercent <- c()
+for(i in 1:nrow(trainingLog)){
+  nextI = i+1
+  if (trainingLog$setNumber[nextI] ==1 | i == nrow(trainingLog)){delta1rmPercent <- c(delta1rmPercent,NA)
+  }
+  else{
+    delta= ((trainingLog$e1rm[nextI] -trainingLog$e1rm[i])/trainingLog$e1rm[i])*100
+    if(delta %>% is.na()){delta1rmPercent<-c(delta1rmPercent,NA)}
+    else if(delta>0){ delta1rmPercent<-c(delta1rmPercent,0)}
+    else{ delta1rmPercent<-c(delta1rmPercent,delta)}
+  }
+}
+
+trainingLog <- (tibble::add_column(trainingLog,percentImpact1rm = delta1rmPercent))
+```
+
+```{r,include=F}
+##RSI Part 2
+stress<- trainingLog %>% filter(group %in% c("horizontalPress","verticalPress","squatMovement","DLMovement")) %>% group_by(group, reps, RPE) %>%  summarise(
+  avgImpact = mean(percentImpact1rm, na.rm= T)
+)
+ggplot(stress, aes(x=as.numeric(RPE),y=-avgImpact)) +geom_point(aes(color = group))
+
+```
+
+
+```{r, include = F}
+big3 <- trainingLog %>% filter(exercise %in% c("lowbar squat belt","bench press","conv DL", "conv DL belt"))
+big3$exercise[big3$exercise == "conv DL"] <- "conv DL belt"
+
+#big3p<- ggplot(big3,aes(x=date)) + geom_line(aes(y=e1rm,color = exercise)) + facet_wrap(~exercise, scales = "free_y",ncol=1) 
+#plotly::ggplotly(big3p)
+```
+
+```{r, include =F}
+big3Strict <- trainingLog %>% filter(exercise %in% c("lowbar squat belt","bench press","conv DL", "conv DL belt") & reps < 4)
+big3Strict$exercise[big3Strict$exercise == "conv DL"] <- "conv DL belt"
+
+#big3pStrict<- ggplot(big3Strict,aes(x=date)) + geom_line(aes(y=e1rm,color = exercise)) + facet_wrap(~exercise, scales = "free_y",ncol=1) 
+#plotly::ggplotly(big3pStrict)
+```
+
+<br />
+
+```{r,include=F}
+#plots
+#ridgeline plot showing distributions of weight for different of a few exercises
+s1rm<-trainingLog %>% filter(exercise =="lowbar squat belt" & reps<6)
+ggplot(s1rm,aes(x=date,y=e1rm)) + geom_line() + scale_x_date(date_breaks="2 months") + geom_smooth(method = "lm")
+
+ggplot(s1rm,aes(x=e1rm,y=date,group = date)) + geom_density_ridges() + scale_x_continuous(name = "e1rm", limits = c(385,475),breaks = c(385,395,405,415,425,435,445,455,465,475,485,495)) +
+  scale_y_date(breaks = date_breaks("2 months")) + 
+  geom_vline(xintercept=mean(s1rm$e1rm,na.rm=T))
+
+
+b1rm <- trainingLog %>% filter(exercise =="bench press" & reps<6)
+ggplot(b1rm,aes(x=date,y=e1rm)) + geom_line() + scale_x_date(date_breaks="2 months") + geom_smooth(method = "lm")
+
+ggplot(b1rm,aes(x=e1rm,y=date,group = date)) + geom_density_ridges() + scale_x_continuous(name = "e1rm", limits = c(295,365)) +
+  scale_y_date(breaks = date_breaks("2 months")) + 
+  geom_vline(xintercept=mean(b1rm$e1rm,na.rm=T))
+#ridgeline plot of proj maxes for each set over time.
+#ridgeline plot of absolute stress index of sets over time by exercise
+#time series plots showing volume ovr time and proj 1rm over time
+# time series plot showing avg weighgt over time by exercise
+```
+
+```{r, include =F}
+big3WeeklyStats<- big3 %>% group_by(week=floor_date(date, "week"),exercise) %>% summarize(
+  repsPerWeek = sum(reps),
+  setsPerWeek = n(),
+  avgIntensityByWeek = mean(weight/e1rm , na.rm=T)
+) 
+big3WeeklyLong <- gather(big3WeeklyStats,metric, value, -c(week,exercise))
+
+  ggplot(big3WeeklyLong,aes(x=week,y=value)) + geom_line(aes(color=metric)) + facet_wrap(~metric,scales="free_y",ncol=1)
+  
+big3WeeklyStats<- big3WeeklyStats %>% mutate(
+  repsPerWeekZ = (repsPerWeek-mean(repsPerWeek,na.rm=T))/sd(repsPerWeek,na.rm=T),
+  setsPerWeekZ =(setsPerWeek-mean(setsPerWeek,na.rm=T))/sd(setsPerWeek,na.rm=T),
+  avgIntZ = (avgIntensityByWeek-mean(avgIntensityByWeek,na.rm=T))/sd(avgIntensityByWeek,na.rm=T)
+  )
+big3Z<-big3WeeklyStats %>% dplyr::select(week,exercise,repsPerWeekZ,setsPerWeekZ,avgIntZ)
+big3ZLong<- big3Z %>% gather(metric,value,-c(week,exercise,repsPerWeekZ))
+ggplot(data=big3ZLong,aes(x=week,y=value)) + geom_line(aes(color=metric)) +facet_wrap(~exercise,ncol=1)  + scale_x_date(date_breaks="8 weeks")
+
+
+```
+
+
+```{r, include = F}
+#devblock 1
+devBlock1<- trainingLog %>% subset(date >= "2018-03-27" & date <= "2018-05-08")
+devBlock1$exercise[devBlock1$exercise == "conv DL"] <- "conv DL belt"
+
+weeklyE1rmblock1 <- devBlock1 %>% filter(reps ==1 & exercise %in% c("lowbar squat belt","bench press","conv DL belt")) %>% group_by(week=floor_date(date, "week")+2,exercise,group) %>%
+  summarize(e1rm = max(e1rm)) 
+benchAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% mean()
+sqtAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% mean()
+DLAvgb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% mean()
+benchSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% sd()
+sqtSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% sd()
+DLSDb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% sd()
+
+weeklyE1rmblock1<- weeklyE1rmblock1 %>% mutate(
+    e1rmZ = ifelse(exercise == "bench press", (e1rm-benchAvgb1)/benchSDb1,
+                     ifelse(exercise == "lowbar squat belt", (e1rm- sqtAvgb1)/sqtSDb1,
+                            ifelse(exercise == "conv DL belt", (e1rm- DLAvgb1)/DLSDb1)))
+  )
+
+
+db1WeeklyStats <- devBlock1 %>% filter(group %in% c("horizontalPress","squatMovement","DLMovement")) %>% group_by(week=floor_date(date, "week")+2,group) %>% 
+   summarize(sets=n(),
+             reps = sum(reps),
+             avgIntensity = mean(weight/e1rm,na.rm=T)
+   )
+db1WeeklyStats<- merge(db1WeeklyStats,weeklyE1rmblock1,by=c("week","group"))
+
+variables <- c("avgIntensity","sdIntensity","avgSets","sdSets", "avgE1rm")
+exercises <- c("bench press","lowbar squat belt", "conv DL belt")
+group <- c("horizontalPress","squatMovement","DLMovement")
+block<- c(replicate(length(variables),1))
+
+avgAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% mean()
+avgAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% mean()
+avgAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% mean()
+sdAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% sd()
+sdAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% sd()
+sdAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% sd()
+##
+avgSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% mean()
+avgSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% mean()
+avgSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% mean()
+sdSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% sd()
+sdSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% sd()
+sdSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% sd()
+#
+db1WeeklyStats<- db1WeeklyStats %>% mutate(
+  avgIntZ = ifelse(group =="horizontalPress",(avgIntensity-avgAvgIntPush)/sdAvgIntPush,
+                   ifelse(group=="squatMovement",(avgIntensity-avgAvgIntSqt)/sdAvgIntSqt,
+                   ifelse(group=="DLMovement",(avgIntensity-avgAvgIntPull)/sdAvgIntPull,NA))),
+  setsZ = ifelse(group =="horizontalPress",(sets-avgSetsPush)/sdSetsPush,
+                   ifelse(group=="squatMovement",(sets-avgSetsSqt)/sdSetsSqt,
+                   ifelse(group=="DLMovement",(sets - avgSetsPull)/sdSetsPull,NA)))
+   )
+db1WeeklyStatsLong<-db1WeeklyStats %>% gather(metric,value, -c(week,group,exercise))
+
+weeklyStatsDB1<- db1WeeklyStats
+weeklyStatsDB1 <-cbind(weeklyStatsDB1, block = replicate(nrow(weeklyStatsDB1),1))
+weeklyStatsDB1Long<- gather(weeklyStatsDB1,metric, value, -c(week,group,exercise,block))
+```
+
+```{r eval=FALSE, include=FALSE}
+ 
+db1p1<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p2)
+db1p1
+
+db1p2<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p2)
+db1p2
+
+db1p3<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p3)
+db1p3
+
+db1p4<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","avgIntZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p4)
+db1p4
+
+```
+```{r include=F}
+#devblock2
+devBlock2 <- trainingLog %>% subset(date >= "2018-05-21" & date <= "2018-08-10")
+devBlock2$exercise[devBlock2$exercise == "conv DL"] <- "conv DL belt"
+
+weeklyE1rmblock1 <- devBlock2 %>% filter(reps ==1 & exercise %in% c("lowbar squat belt","bench press","conv DL belt")) %>% group_by(week=floor_date(date, "week")+1,exercise,group) %>%
+  summarize(e1rm = max(e1rm)) 
+benchAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% mean()
+sqtAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% mean()
+DLAvgb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% mean()
+benchSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% sd()
+sqtSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% sd()
+DLSDb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% sd()
+initialSquat<- (weeklyE1rmblock1 %>% filter(week == "2018-05-21" & exercise=="lowbar squat belt"))$e1rm
+initialBench<- (weeklyE1rmblock1 %>% filter(week == "2018-05-21" & exercise=="bench press"))$e1rm
+initialDL <- (weeklyE1rmblock1 %>% filter(week == "2018-05-21" & exercise=="conv DL belt"))$e1rm
+                
+weeklyE1rmblock1<- weeklyE1rmblock1 %>% mutate(
+    e1rmZ = ifelse(exercise == "bench press", (e1rm-benchAvgb1)/benchSDb1,
+                     ifelse(exercise == "lowbar squat belt", (e1rm- sqtAvgb1)/sqtSDb1,
+                            ifelse(exercise == "conv DL belt", (e1rm- DLAvgb1)/DLSDb1))),
+    
+    changeInE1rmFromBase = ifelse(exercise == "bench press", (e1rm-initialBench)/initialBench,
+                     ifelse(exercise == "lowbar squat belt", (e1rm-initialSquat)/initialSquat,
+                            ifelse(exercise == "conv DL belt", (e1rm- initialDL)/initialDL)))
+  )
+
+
+db1WeeklyStats <- devBlock2 %>% filter(group %in% c("horizontalPress","squatMovement","DLMovement")) %>% group_by(week=floor_date(date, "week")+1,group) %>% 
+   summarize(sets=n(),
+             reps = sum(reps),
+             avgIntensity = mean(weight/e1rm,na.rm=T)
+   )
+db1WeeklyStats<- merge(db1WeeklyStats,weeklyE1rmblock1,by=c("week","group"))
+avgAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% mean()
+avgAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% mean()
+avgAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% mean()
+sdAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% sd()
+sdAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% sd()
+sdAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% sd()
+##
+avgSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% mean()
+avgSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% mean()
+avgSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% mean()
+sdSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% sd()
+sdSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% sd()
+sdSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% sd()
+#
+db1WeeklyStats<- db1WeeklyStats %>% mutate(
+  avgIntZ = ifelse(group =="horizontalPress",(avgIntensity-avgAvgIntPush)/sdAvgIntPush,
+                   ifelse(group=="squatMovement",(avgIntensity-avgAvgIntSqt)/sdAvgIntSqt,
+                   ifelse(group=="DLMovement",(avgIntensity-avgAvgIntPull)/sdAvgIntPull,NA))),
+  setsZ = ifelse(group =="horizontalPress",(sets-avgSetsPush)/sdSetsPush,
+                   ifelse(group=="squatMovement",(sets-avgSetsSqt)/sdSetsSqt,
+                   ifelse(group=="DLMovement",(sets - avgSetsPull)/sdSetsPull,NA)))
+   )
+db1WeeklyStatsLong<-db1WeeklyStats %>% gather(metric,value, -c(week,group,exercise))
+
+weeklyStatsDB2<- db1WeeklyStats
+weeklyStatsDB2 <-cbind(weeklyStatsDB2, block = replicate(nrow(weeklyStatsDB2),2))
+weeklyStatsDB2Long<- gather(weeklyStatsDB2,metric, value, -c(week,group,exercise,block))
+```
+
+```{r eval=FALSE, include=FALSE}
+db1p5<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p5)
+db1p5
+
+db1p6<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p6)
+db1p6
+
+db1p7<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p7)
+db1p7
+
+db1p8<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","avgIntZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p8)
+db1p8
+
+
+db1p9<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("changeInE1rmFromBase","avgIntensity")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p9)
+db1p5
+
+```
+
+```{r,include = F}
+#devblock3
+#devBlock3 %>% View()
+devBlock3<- trainingLog %>% subset(date >= "2018-09-18" & date <= "2018-11-24")
+#devBlock3 %>% filter(group=="squatMovement") %>% group_by(exercise,date,group) %>% summarize(sets=max(setNumber)) %>% view()
+db3chart<- ggplot(devBlock3 %>% group_by(exercise,date,group) %>% summarize(sets=max(setNumber)),aes(y=sets,x=date))+geom_line(aes(color=group))
+#plotly::ggplotly(db3chart)
+db3chart
+
+devBlock3$exercise[devBlock3$exercise == "conv DL"] <- "conv DL belt"
+
+weeklyE1rmblock1 <- devBlock3 %>% filter(reps ==1 & exercise %in% c("lowbar squat belt","bench press","conv DL belt")) %>% group_by(week=floor_date(date, "week")+2,exercise,group) %>%
+  summarize(e1rm = max(e1rm)) 
+benchAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% mean()
+sqtAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% mean()
+DLAvgb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% mean()
+benchSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% sd()
+sqtSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% sd()
+DLSDb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% sd()
+initialSquat<- (weeklyE1rmblock1 %>% filter(week == "2018-09-18" & exercise=="lowbar squat belt"))$e1rm
+initialBench<- (weeklyE1rmblock1 %>% filter(week == "2018-09-18" & exercise=="bench press"))$e1rm
+initialDL <- (weeklyE1rmblock1 %>% filter(week == "2018-09-18" & exercise=="conv DL belt"))$e1rm
+                
+weeklyE1rmblock1<- weeklyE1rmblock1 %>% mutate(
+    e1rmZ = ifelse(exercise == "bench press", (e1rm-benchAvgb1)/benchSDb1,
+                     ifelse(exercise == "lowbar squat belt", (e1rm- sqtAvgb1)/sqtSDb1,
+                            ifelse(exercise == "conv DL belt", (e1rm- DLAvgb1)/DLSDb1))),
+    
+    changeInE1rmFromBase = ifelse(exercise == "bench press", (e1rm-initialBench)/initialBench,
+                     ifelse(exercise == "lowbar squat belt", (e1rm-initialSquat)/initialSquat,
+                            ifelse(exercise == "conv DL belt", (e1rm- initialDL)/initialDL)))
+  )
+
+
+db1WeeklyStats <- devBlock3 %>% filter(group %in% c("horizontalPress","squatMovement","DLMovement")) %>% group_by(week=floor_date(date, "week")+2,group) %>% 
+   summarize(sets=n(),
+             reps = sum(reps),
+             avgIntensity = mean(weight/e1rm,na.rm=T)
+   )
+db1WeeklyStats<- merge(db1WeeklyStats,weeklyE1rmblock1,by=c("week","group"))
+avgAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% mean()
+avgAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% mean()
+avgAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% mean()
+sdAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% sd()
+sdAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% sd()
+sdAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% sd()
+##
+avgSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% mean()
+avgSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% mean()
+avgSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% mean()
+sdSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% sd()
+sdSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% sd()
+sdSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% sd()
+#
+db1WeeklyStats<- db1WeeklyStats %>% mutate(
+  avgIntZ = ifelse(group =="horizontalPress",(avgIntensity-avgAvgIntPush)/sdAvgIntPush,
+                   ifelse(group=="squatMovement",(avgIntensity-avgAvgIntSqt)/sdAvgIntSqt,
+                   ifelse(group=="DLMovement",(avgIntensity-avgAvgIntPull)/sdAvgIntPull,NA))),
+  setsZ = ifelse(group =="horizontalPress",(sets-avgSetsPush)/sdSetsPush,
+                   ifelse(group=="squatMovement",(sets-avgSetsSqt)/sdSetsSqt,
+                   ifelse(group=="DLMovement",(sets - avgSetsPull)/sdSetsPull,NA)))
+   )
+db1WeeklyStatsLong<-db1WeeklyStats %>% gather(metric,value, -c(week,group,exercise))
+
+weeklyStatsDB3<- db1WeeklyStats
+weeklyStatsDB3 <-cbind(weeklyStatsDB3, block = replicate(nrow(weeklyStatsDB3),3))
+weeklyStatsDB3Long<- gather(weeklyStatsDB3,metric, value, -c(block,group,week,exercise))
+
+
+```
+
+```{r eval=FALSE, include=FALSE}
+ 
+db1p10<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p10)
+db1p10
+db1p11<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p11)
+db1p11
+db1p12<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p12)
+db1p12
+db1p13<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","avgIntZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p13)
+db1p13
+
+db1p14<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("changeInE1rmFromBase","avgIntensity")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p14)
+db1p14
+```
+```{r,include = F}
+#devblock4
+devBlock4 <- trainingLog %>% subset(date >= "2018-11-24" & date <= "2019-02-09")
+
+devBlock4$exercise[devBlock4$exercise == "conv DL"] <- "conv DL belt"
+
+weeklyE1rmblock1 <- devBlock4 %>% filter(reps ==1 & exercise %in% c("lowbar squat belt","bench press","conv DL belt")) %>% group_by(week=floor_date(date,"week",week_start =6),exercise,group) %>%
+  summarize(e1rm = max(e1rm)) 
+benchAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% mean()
+sqtAvgb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% mean()
+DLAvgb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% mean()
+benchSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "bench press"))$e1rm %>% sd()
+sqtSDb1 <- (weeklyE1rmblock1 %>% filter(exercise == "lowbar squat belt"))$e1rm %>% sd()
+DLSDb1<- (weeklyE1rmblock1 %>% filter(exercise == "conv DL belt"))$e1rm %>% sd()
+initialSquat<- (weeklyE1rmblock1 %>% filter(week == "2018-11-24" & exercise=="lowbar squat belt"))$e1rm
+initialBench<- (weeklyE1rmblock1 %>% filter(week == "2018-11-24" & exercise=="bench press"))$e1rm
+initialDL <- (weeklyE1rmblock1 %>% filter(week == "2018-11-24" & exercise=="conv DL belt"))$e1rm
+                
+weeklyE1rmblock1<- weeklyE1rmblock1 %>% mutate(
+    e1rmZ = ifelse(exercise == "bench press", (e1rm-benchAvgb1)/benchSDb1,
+                     ifelse(exercise == "lowbar squat belt", (e1rm- sqtAvgb1)/sqtSDb1,
+                            ifelse(exercise == "conv DL belt", (e1rm- DLAvgb1)/DLSDb1))),
+    
+    changeInE1rmFromBase = ifelse(exercise == "bench press", (e1rm-initialBench)/initialBench,
+                     ifelse(exercise == "lowbar squat belt", (e1rm-initialSquat)/initialSquat,
+                            ifelse(exercise == "conv DL belt", (e1rm- initialDL)/initialDL)))
+  )
+
+
+db1WeeklyStats <- devBlock4 %>% filter(group %in% c("horizontalPress","squatMovement","DLMovement")) %>% group_by(group,week=floor_date(date, "week",week_start = 6)) %>% 
+   summarize(sets=n(),
+             reps = sum(reps),
+             avgIntensity = mean(weight/e1rm,na.rm=T)
+   )
+db1WeeklyStats<- merge(db1WeeklyStats,weeklyE1rmblock1,by=c("week","group"))
+avgAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% mean()
+avgAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% mean()
+avgAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% mean()
+sdAvgIntPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$avgIntensity %>% sd()
+sdAvgIntPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$avgIntensity %>% sd()
+sdAvgIntSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$avgIntensity %>% sd()
+##
+avgSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% mean()
+avgSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% mean()
+avgSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% mean()
+sdSetsPush <- (db1WeeklyStats %>% filter(group == "horizontalPress"))$sets %>% sd()
+sdSetsPull <- (db1WeeklyStats %>% filter(group == "DLMovement"))$sets %>% sd()
+sdSetsSqt <- (db1WeeklyStats %>% filter(group == "squatMovement"))$sets %>% sd()
+#
+db1WeeklyStats<- db1WeeklyStats %>% mutate(
+  avgIntZ = ifelse(group =="horizontalPress",(avgIntensity-avgAvgIntPush)/sdAvgIntPush,
+                   ifelse(group=="squatMovement",(avgIntensity-avgAvgIntSqt)/sdAvgIntSqt,
+                   ifelse(group=="DLMovement",(avgIntensity-avgAvgIntPull)/sdAvgIntPull,NA))),
+  setsZ = ifelse(group =="horizontalPress",(sets-avgSetsPush)/sdSetsPush,
+                   ifelse(group=="squatMovement",(sets-avgSetsSqt)/sdSetsSqt,
+                   ifelse(group=="DLMovement",(sets - avgSetsPull)/sdSetsPull,NA)))
+   )
+db1WeeklyStatsLong<-db1WeeklyStats %>% gather(metric,value, -c(week,group,exercise))
+
+weeklyStatsDB4<- db1WeeklyStats
+weeklyStatsDB4 <-cbind(weeklyStatsDB4, block = replicate(nrow(weeklyStatsDB4),4))
+weeklyStatsDB4Long<- gather(weeklyStatsDB4,metric, value, -c(week,group,exercise,block))
+
+
+```
+
+```{r eval=FALSE, include=FALSE}
+ 
+db1p15<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p15)
+db1p15
+db1p16<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("avgIntZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p16)
+db1p16
+db1p17<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","e1rmZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p17)
+db1p17
+db1p18<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("setsZ","avgIntZ")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p18)
+db1p18
+
+
+db1p19<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("changeInE1rmFromBase","avgIntensity")),aes(x=week,y=value)) + geom_line(aes(group=metric,color=metric))+facet_wrap(~exercise,ncol=1) 
+#plotly::ggplotly(db1p19)
+db1p19
+```
+
+
+# Using data at the meso-cycle/block level.
+
+This is where the fun begins. A few months of training data and a couple valid assumptions can contain multiple insights to aid in future training programming for an individual. Here is an example block analysis for my own training data. I'll focus on the three main movements to keep it simple — the squat, the bench press, and the deadlift. 
+
+```{r,echo=F}
+d1<- ggplot(weeklyStatsDB1,aes(x=week,y=e1rm)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise))+facet_wrap(~exercise,scales="free_y")
+#plotly::ggplotly(d1) 
+d1
+#sets per week facet by exercise color by block
+ d1 <- ggplot(weeklyStatsDB1,aes(x=week,y=sets)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise)) + facet_wrap(~exercise,scales="free")
+ #plotly::ggplotly(d1)
+ d1
+ d1<- ggplot(weeklyStatsDB1Long %>% filter(metric %in% c("e1rmZ","avgIntZ","setsZ")),aes(x=week,y=value)) + geom_line(aes(color = metric)) + geom_point(aes(color=metric)) +facet_wrap(~exercise,scales = "free_y") + ggtitle("Deadlift")
+#plotly::ggplotly(d1)
+d1
+```
+
+Potential insights: 
+
+* 1.) natural "peak" occurs approximately 4-5 weeks into the block across these lifts. 
+
+* 2.) The stall/decrease may have occurred for one of two reasons (most likely)
+    
+    * too much volume --> need to drop volume for a week or two and recover. (I tried this, and it didn't work)
+    
+    * too little volume --> not enough of a stimulus, increase volume. (Since option 1 didn't work, I tried this in the subsequent block)
+            
+Leading into the next block, I decided to increase the sets/week and decrease intensity accordingly. In the 3rd block, I tried to keep most variables similar to the second, except I "front loaded" volume on the squat (performed most of the high volume weeks in the first portion of the block). I also increased the bench volume. Let's see the results of adjusting the training parameters in a meta-block review. I'll examine the only the squat for the sake of brevity...
+
+
+# Using data at the meta-block level
+
+The greatest variables to check are volume and intensity, followed by frequency (provided exercise selection is relatively specific). We look at the following metrics
+
+* e1rm over time for each exercise
+* weekly volume over time in terms of sets and reps by exercise grouping (only including the squat variants to keep the example minimal)
+* average weekly intensity as a proportion of the estimated one rep max (only including the squat variants to keep the example minimal)
+
+```{r,include=F}
+weeklyStatsAllBlocks <-weeklyStatsDB1 %>%  plyr::rbind.fill(weeklyStatsDB2) %>% plyr::rbind.fill(weeklyStatsDB3) %>% plyr::rbind.fill(weeklyStatsDB4)
+weeklyStatsAllBlocksLong <-gather(weeklyStatsAllBlocks, metric, value,-c(week,group,exercise,block))
+```
+
+```{r,include=F,warning=F,message=F}
+devBlockAll<-devBlock1 %>% mutate(block=1) %>%  plyr::rbind.fill(devBlock2 %>% mutate(block=2)) %>% plyr::rbind.fill(devBlock3 %>% mutate(block=3)) %>% plyr::rbind.fill(devBlock4 %>% mutate(block=4)) %>% group_by(block) %>%  mutate(t=date-min(date))
+devBlockAll<- devBlockAll %>% group_by(block) %>% mutate(week=as.Date(floor_date(date,"week",week_start=wday(min(date),week_start=1)))) %>% mutate( tWeek=difftime(week,min(week),units="weeks"))
+weekLevel<-devBlockAll %>% filter(group %in% c("DLMovement","horizontalPress","squatMovement"))  %>% group_by(group,block,week,tWeek) %>% summarize(numSets=n(),numReps=sum(reps),avgWeeklyIntensity=sum(reps * weight/mean(e1rm,na.rm=T) )/numReps, sdWeeklyIntensity=sqrt( sum(reps*(weight/mean(e1rm,na.rm=T) - avgWeeklyIntensity)^2/(numReps-1))) )
+#weekLevel
+#devBlockAll %>% group_by(block,week,group) %>% mutate(totalIntensity=reps*(weight/mean(e1rm))) %>% summarize(avgInt=totalIntensity/sum(reps))
+weekLevelLong<-weekLevel %>% filter(group=="squatMovement") %>% gather(key="metric",value="val",c(numSets,numReps,avgWeeklyIntensity))
+
+weekAvgs<-weekLevel %>% group_by(group,block) %>% summarize(avgSets=mean(numSets,na.rm=T),sdSets=sd(numSets,na.rm = T),meanReps=mean(numReps,na.rm=T),avgInt=mean(avgWeeklyIntensity,na.rm=T),sdInt=sd(avgWeeklyIntensity,na.rm=T),sdReps=sd(numReps,na.rm = T))
+  
+weeklyStatsAllBlocks <- weeklyStatsAllBlocks %>% group_by(block) %>% mutate(t=week-min(week))
+sessLevel<-devBlockAll %>% filter(group %in% c("DLMovement","horizontalPress","squatMovement")) %>% group_by(group,block,t) %>% summarize(numSets=n(),numReps=sum(reps),avgSessionIntensity=mean(weight,na.rm=T)/mean(e1rm,na.rm=T))
+```
+
+```{r,include=F}
+sessLevelLong<- sessLevel %>% gather(key="metric",value = "val",c(numSets,numReps,avgSessionIntensity))
+tsp<- ggplot(sessLevelLong %>% filter(group=="squatMovement"),aes(y=val,x=t,color=as.factor(block)))+geom_line()+geom_point()+facet_wrap(~metric,scales="free")
+#plotly::ggplotly(tsp)
+tsp
+sessionAvgs<- devBlockAll %>% filter(group %in% c("DLMovement","horizontalPress","squatMovement")) %>% group_by(group,block) %>% summarize(numSets=n(),numReps=sum(reps),numSessions=length(unique(date))) %>% mutate(avgRPS=numReps/numSessions,avgSPS=numSets/numSessions)
+
+
+```
+
+```{r,echo=F}
+#delta e1rm facet by exercise color by block
+pe1rm2<-ggplot(weeklyStatsAllBlocks,aes(x=week,y=e1rm)) + geom_line(aes(color=as.factor(block)))+geom_point(aes(color=as.factor(block))) + facet_wrap(~exercise,scales = "free",ncol=2) + scale_y_continuous(limits = c(300,550))
+pe1rm2
+#plotly::ggplotly(pe1rm2) 
+```
+
+```{r,echo=F}
+
+# plotly::ggplotly(
+#   ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data=weekAvgs,yintercept=avgInt)
+# )
+
+ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgInt,color=as.factor(block)),linetype="dashed")
+
+#+geom_errorbar(aes(ymin=avgWeeklyIntensity-sdWeeklyIntensity, ymax=avgWeeklyIntensity+sdWeeklyIntensity), width=.1) 
+    
+
+ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numSets,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() +geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgSets,color=as.factor(block)),linetype="dashed")
+    
+
+
+ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numReps,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=meanReps,color=as.factor(block)),linetype="dashed")# + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps+sdReps,color=as.factor(block)),linetype="dotted") #+ geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps-sdReps,color=as.factor(block)),linetype="dotted")
+
+
+```
+
+insights from comparing blocks 1 to 2 and 3...
+
+ * Block 1 had insufficient volume and there was no need to keep intensity so high.
+ 
+Insights from comparing blocks 2 and 3...
+
+ * Both blocks were very successful (both projected e1rms increase by ~30 lbs).
+ * Block 3 was successful AND predictable in that I hit the highest e1rm of the program on the exact day I planned to do so. The "peak" was precise. 
+ * Sets per week were fairly similar (just shift block 3 two weeks to the right and they line up almost perfectly... this was by design)
+ * intensity stayed above its average for most weeks in block 2, while block 3 stayed below its average for most weeks.
+ * I managed to successfully slightly increase volume and intensity over the whole of the block while recovering adequately in block 3.
+ 
+Going forward...
+
+ * Be patient, wait until the last few weeks and then spike intensity sharply.
+ * It works well when volume & reps remain higher "most the time", and intensity remains lower until it's time for the final peak. This might be a hint to stay at lower intensity ranges for a longer period of time in the future, or attempt to drop the intensity even further and have it climb from 72 percent unstead of from 77 percent.
+ * It's okay to keep squatting into the "max-out" week. I actually managed to perform better on the final week with a less severe drop in volume.
+ * 1 experiment: try to keep the same avg intensity,reps, and sets per week, but instead of front-loading volume (high week to week variance, low within the week variance), try to increase the within week variance and decrease week to week variance.
+ 
+ 

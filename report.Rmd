@@ -27,21 +27,6 @@ library(astsa)
 
 
 
-# Our Vision (at the individual level)
-
-We want athletes and coaches to be able to analyze their training in a way that allows them to experiment and iteratively alter training parameters for future training blocks. An example analysis will illustrate how we want our clients to be able to interact with their data and make actionable changes to training during a single training session, after a training micro-cycle(~1-2weeks of training), meso-cycle(~1-3 months of training, also called a "block"), and at the macro-cycle level (~ >3-6months, also called a "meta-block"). 
- 
-
-## Using data at the week's level. 
-
-It's generally not a good idea to take one week's data in an attempt to describe progress, as performance fluctuations (or lack thereof) within the week have a degree of randomness, and performance over the span of one week does not dictate the trajectory of the program as a whole (as we'll come to see soon). Assessing weekly adherence to a trianing protocol is a better use for data on a time-scale of ~7-14 days (as opposed to assessing progress). You'd be surprised at how often people veer off program, [this sample](https://startingstrength.com/article/wndtp) of 324 individuals showed that about 5% (17 participants) were even close to adhering to the program fully. For example, if one's program calls for 5 sets of 5 at RPE 7 on the squat 2x per week (5x5 @ 7 x 2), 4x10 @ 7 x 2 on bench, 3x5 @ 8 x 2 on deadlift, and 4x5 @ 8 x 2 on overhead press, we can compare expected and actual outcomes in a weekly summary...
-
-```{r,echo=F}
-ex<-data.frame(exercise =c("squat","bench", "deadlift", "overhead press"), target_reps = c(50,70,30,40), reps_performed=c(50,60,30,28), avg_rpe=c(7,9,8,7))
-exLong<-ex %>% gather(key="metric",value="reps",c(target_reps,reps_performed))
-ggplot(exLong,aes(exercise,reps))+geom_bar(stat="identity",position = position_dodge(width = -0.5),aes(fill=metric))
-```
-
 
 
 

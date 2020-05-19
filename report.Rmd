@@ -255,7 +255,6 @@ ggplot(data=big3ZLong,aes(x=week,y=value)) + geom_line(aes(color=metric)) +facet
 
 ```
 
-
 ```{r, include = F}
 #devblock 1
 devBlock1<- trainingLog %>% subset(date >= "2018-03-27" & date <= "2018-05-08")
@@ -601,10 +600,18 @@ db1p19<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("changeInE1rmFromBase
 db1p19
 ```
 
+## Introduction
+
+In the past year or so my strength has not been where I expect it to be. My squat, bench press, and deadlift one rep maxes have been stagnating. I figured it was time to start planning my training more intelligently. This is difficult to do for an individual. Traditional statistical approaches don't seem to work for the following reasons: (1) We are not estimating population level parameters; (2) We are not forecasting time series trends, because we are experimentally altering the process which governs that trend.
+
+In addition, an experiment with only myself would be infeasible. Even if I could expose myself to, say, 4 experimental 10-week programs and one control program multiple times, that would take years to complete. I need to know what will work for me in a few months. To overcome the problem and facilitate progress within weeks to months, I had to build a framework of training where I would either directly make progress in strength or obtain information that would enable me to make progress in future training blocks (even if no progress was made in the current block). I decided to use adopt a paradigm similar to one constructed by Mike Tuscherer known as "emerging strategies". (If you're interested, [here's his lecture on the topic](https://www.youtube.com/watch?v=WdGP120e4B0)).
+
+Let each workout be called a "session". Each session is composed of sets. Each set has a certain exercise associated with it, a certain number of repetitions, and a rate of Perceived exertion on a scale of 10) categories (not exercises, we'll see why soon), three of which are relevant in this analysis (though there are more than this to consider): horizontal push (bench press variations, pushups, dips, etc.), squat variations, and deadlift variations. Each movement category has a primary exercise associated with it and many secondary exercises. The primary exercise in a movement category is the one  you're directly trying to increase. In my case, these exercises were the lowbar squat, the bench press (touch and go), and the conventional deadlift. All other exercises in each movement category are considered secondary. Each movement
+
+The smallest repeatable sequencing of sessions. It is the sequencing that is repeatable, not the session itself! For example, I lift every Monday, Wednesday, and Friday. That is a repeatable sequence, regardless of what movements each session consists
 
 # Using data at the meso-cycle/block level.
 
-This is where the fun begins. A few months of training data and a couple valid assumptions can contain multiple insights to aid in future training programming for an individual. Here is an example block analysis for my own training data. I'll focus on the three main movements to keep it simple — the squat, the bench press, and the deadlift. 
 
 ```{r,echo=F}
 d1<- ggplot(weeklyStatsDB1,aes(x=week,y=e1rm)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise))+facet_wrap(~exercise,scales="free_y")

@@ -692,7 +692,7 @@ pe1rm2<-ggplot(weeklyStatsAllBlocks,aes(x=week,y=e1rm)) + geom_line(aes(color=as
 plotly::ggplotly(pe1rm2) 
 ```
 
-```{r,echo=F}
+```{r,echo=F,message=F,warning=F}
 
 # plotly::ggplotly(
 #   ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data=weekAvgs,yintercept=avgInt)

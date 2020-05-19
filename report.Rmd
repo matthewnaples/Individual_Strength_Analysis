@@ -2,8 +2,7 @@
 title: "Emergent Strategies for Strength Development"
 author: Matt Naples
 date: "4/24/2019"
-output:
-  html_document: default
+output: html_document
 ---
 ```{r, include = F}
 library(tidyverse)
@@ -622,8 +621,8 @@ This is where the fun begins. A few months of training data and a couple valid a
 
 ```{r,echo=F}
 d1<- ggplot(weeklyStatsDB1,aes(x=week,y=e1rm)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise))+facet_wrap(~exercise,scales="free_y")
-#plotly::ggplotly(d1) 
-d1
+plotly::ggplotly(d1) 
+#d1
 #sets per week facet by exercise color by block
  d1 <- ggplot(weeklyStatsDB1,aes(x=week,y=sets)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise)) + facet_wrap(~exercise,scales="free")
  #plotly::ggplotly(d1)

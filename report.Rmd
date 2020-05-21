@@ -24,12 +24,6 @@ library(tseries)
 library(astsa)
 ```
 
-
-
-
-
-
-
 ```{r,include=F}
 trainingLog <- read.csv("data/trainingLog copy.csv")
 trainingLog <- tibble::as_tibble(trainingLog)
@@ -599,28 +593,40 @@ db1p19<- ggplot(db1WeeklyStatsLong %>% filter(metric %in%c("changeInE1rmFromBase
 #plotly::ggplotly(db1p19)
 db1p19
 ```
+## Abstract
+In the realm of strength training, I often hear the question "What is the best training block?" There's often an implicit clause in that question: "What is the best training program (for me, right now)?" At its heart, this question is untennable. Optimizing individual training response requires optimizing the use of individual data, and individual data takes time to collect (making the "right now" part of the question impossible). Mike Tuscherer has developed a training paradigm called "emerging strategies", and it seeks to answer a different question: "How can I structure a training block and use that block's data in order to make sufficient progress during said block, gather insights that will lead to sufficient progress in a future block, or both?" It is a system of training that requires training to be closely monitored by keeping track of a few relevant variables. Using this paradigm, I put 30 pounds on my bench press (310 to 340 lbs), 50 pounds on my squat (405 to 455), and about 65 pounds on my deadlift (430 to 495) after nearly a year of stagnation.
 
-## Introduction
 
-In the past year or so my strength has not been where I expect it to be. My squat, bench press, and deadlift one rep maxes have been stagnating. I figured it was time to start planning my training more intelligently. This is difficult to do for an individual. Traditional statistical approaches don't seem to work for the following reasons: (1) We are not estimating population level parameters; (2) We are not forecasting time series trends, because we are experimentally altering the process which governs that trend.
+## Introduction: motivating the problem
 
-In addition, an experiment with only myself would be infeasible. Even if I could expose myself to, say, 4 experimental 10-week programs and one control program multiple times, that would take years to complete. I need to know what will work for me in a few months. To overcome the problem and facilitate progress within weeks to months, I had to build a framework of training where I would either directly make progress in strength or obtain information that would enable me to make progress in future training blocks (even if no progress was made in the current block). I decided to use adopt a paradigm similar to one constructed by Mike Tuscherer known as "emerging strategies". (If you're interested, [here's his lecture on the topic](https://www.youtube.com/watch?v=WdGP120e4B0)).
+In 2018, my squat, bench press, and deadlift one rep maxes were stagnating. I figured it was time to start planning my training more intelligently. I was using good "programming principles" beforehand, but these principles fail to capture individual variability to a training stimulus. They are a good starting point, but a good training regimen should be based on solid principles *and* an individual's prior training data. My methodology is described futher below. Traditional statistical approaches didn't suffice in this project for the following reasons: (1) It takes far too long to obtain the data necessary to find optimal training parameters for an individual; (2) I wasn't forecasting time series trends, because I experimentally altered the process which governs that trend;(3) exposing myself to various experimental blocks wouldn't work, because strength increased under some experimental block at one time does not increase my confidence that it will work for more than a few exposures in a row. 
 
-Let each workout be called a "session". Each session is composed of sets. Each set has a certain exercise associated with it, a certain number of repetitions, and a rate of Perceived exertion on a scale of 10) categories (not exercises, we'll see why soon), three of which are relevant in this analysis (though there are more than this to consider): horizontal push (bench press variations, pushups, dips, etc.), squat variations, and deadlift variations. Each movement category has a primary exercise associated with it and many secondary exercises. The primary exercise in a movement category is the one  you're directly trying to increase. In my case, these exercises were the lowbar squat, the bench press (touch and go), and the conventional deadlift. All other exercises in each movement category are considered secondary. Each movement
+## Methodology: An Emerging Strategy
 
-The smallest repeatable sequencing of sessions. It is the sequencing that is repeatable, not the session itself! For example, I lift every Monday, Wednesday, and Friday. That is a repeatable sequence, regardless of what movements each session consists
+To overcome the aformentioned problems, I decided to use adopt a paradigm similar to one constructed by Mike Tuscherer known as "emerging strategies". (If you're interested, [here's his lecture on the topic](https://www.youtube.com/watch?v=WdGP120e4B0)). The plan to gain strength is as follows:
 
-# Using data at the meso-cycle/block level.
+* 1.) Create a microcycle of training. My microcycle is one week long. It contains a training regimen that will be repeated multiple times. For example, if I perform the lowbar squat on Monday for 5x6@8 (5 sets of 6 reps at RPE8), highbar squat on Wednesday for 4x4@7, and the front squat on Friday for 4x8@8, I will repeat that protocol each week.
+* 2.) *Establish a goal metric*. For myself, these metrics are the e1rm on the squat, bench press and deadlift.
+* 3.) *Establish a way to monitor these metrics*. In this case, the e1rm were monitored by performing one set of one rep at RPE 8 on the target exercises one time per week. This roughly corresponds to 92% of an e1rm. 
+* 4.) *Repeat the microcycle until the goal metric stagnates for n weeks in a row*, I selected 2. 
+* 5.) If the program achieved the desired outcome, repeat the protocol. If not, then repeat steps 1-5. When reparameterizing the microcycle and perhaps the goal metric, use prior knowledge and the information gained in the microcycle. This is a vague description, because I'm not quite sure how to formalize this yet. In the future, I really want to update the parameters using a bayesian model, where the prior probability is the probability of obtaining sufficient results from a sequence of microcycles, and the updated parameter estimates are the parameters described in step one.  
+
+# My implementation of emerging strategies
+
+Let's look at how I parameterized my microcycle in the first block... 
+I wanted to squat 13 sets per week, deadlift 8 sets per week , and bench press 17 sets per week. The average intensity was also fairly high, because my reps per ranged from 2 to 7. 
+ 
+ My e1rm stagnated around week 4 on all exercises. I decreases the volume on the final weeks in an attempt to decay any fatigue that could be masking strength increase. 
 
 
 ```{r,echo=F}
 d1<- ggplot(weeklyStatsDB1,aes(x=week,y=e1rm)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise))+facet_wrap(~exercise,scales="free_y")
 plotly::ggplotly(d1) 
-#d1
-#sets per week facet by exercise color by block
- d1 <- ggplot(weeklyStatsDB1,aes(x=week,y=sets)) + geom_line(aes(color=exercise))+geom_point(aes(color=exercise)) + facet_wrap(~exercise,scales="free")
- #plotly::ggplotly(d1)
- d1
+```
+
+
+
+```{r,eval=FALSE}
  d1<- ggplot(weeklyStatsDB1Long %>% filter(metric %in% c("e1rmZ","avgIntZ","setsZ")),aes(x=week,y=value)) + geom_line(aes(color = metric)) + geom_point(aes(color=metric)) +facet_wrap(~exercise,scales = "free_y") + ggtitle("Deadlift")
 #plotly::ggplotly(d1)
 d1
@@ -636,16 +642,13 @@ Potential insights:
     
     * too little volume --> not enough of a stimulus, increase volume. (Since option 1 didn't work, I tried this in the subsequent block)
             
-Leading into the next block, I decided to increase the sets/week and decrease intensity accordingly. In the 3rd block, I tried to keep most variables similar to the second, except I "front loaded" volume on the squat (performed most of the high volume weeks in the first portion of the block). I also increased the bench volume. Let's see the results of adjusting the training parameters in a meta-block review. I'll examine the only the squat for the sake of brevity...
+Leading into the next block, I decided to increase the sets/week and reps/week. I also decreased the average intensity accordingly. In the 3rd block, I tried to keep most variables similar to the second except I "front loaded" volume on the squat (performed most of the high volume weeks in the first portion of the block). I also increased the bench volume. Let's see the results of adjusting the training parameters in a meta-block review. I'll examine the only the squat for the sake of brevity...
 
 
-# Using data at the meta-block level
+# Comparing block results
 
-The greatest variables to check are volume and intensity, followed by frequency (provided exercise selection is relatively specific). We look at the following metrics
+Now, I want to really look at the differences in training parameters as well as target metrics across 4 blocks. To keep it brief, I'm just going to focus on the squat, though I will show the change in e1rm for all lifts.
 
-* e1rm over time for each exercise
-* weekly volume over time in terms of sets and reps by exercise grouping (only including the squat variants to keep the example minimal)
-* average weekly intensity as a proportion of the estimated one rep max (only including the squat variants to keep the example minimal)
 
 ```{r,include=F}
 weeklyStatsAllBlocks <-weeklyStatsDB1 %>%  plyr::rbind.fill(weeklyStatsDB2) %>% plyr::rbind.fill(weeklyStatsDB3) %>% plyr::rbind.fill(weeklyStatsDB4)
@@ -676,34 +679,38 @@ sessionAvgs<- devBlockAll %>% filter(group %in% c("DLMovement","horizontalPress"
 
 ```
 
+We can see that blocks 2 and 3 were the most successful based on the charts below.
 ```{r,echo=F}
 #delta e1rm facet by exercise color by block
-pe1rm2<-ggplot(weeklyStatsAllBlocks,aes(x=week,y=e1rm)) + geom_line(aes(color=as.factor(block)))+geom_point(aes(color=as.factor(block))) + facet_wrap(~exercise,scales = "free",ncol=2) + scale_y_continuous(limits = c(300,550))
+weeklyStatsAllBlocks$block<- as.factor(weeklyStatsAllBlocks$block)
+pe1rm2<-ggplot(weeklyStatsAllBlocks,aes(x=week,y=e1rm)) + geom_line(aes(color=block))+geom_point(aes(color=block)) + facet_wrap(~exercise,scales = "free",ncol=2) + scale_y_continuous(limits = c(300,510),breaks=seq(300,500,by = 20)) +ggtitle("estimated one rep max (lbs) over time") +xlab("month")
 #pe1rm2
 plotly::ggplotly(pe1rm2) 
 ```
 
+So, what changed? Let's look at the reps per week, sets per week, and  average intensity per week. It's clear that moderate intensity and higher volume worked better than high intensity with lower volumes.
 ```{r,echo=F,message=F,warning=F}
 
 # plotly::ggplotly(
 #   ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data=weekAvgs,yintercept=avgInt)
 # )
 
-ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgInt,color=as.factor(block)),linetype="dashed")
+plotly::ggplotly( ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=avgWeeklyIntensity,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgInt,color=as.factor(block)),linetype="dashed") )
 
 #+geom_errorbar(aes(ymin=avgWeeklyIntensity-sdWeeklyIntensity, ymax=avgWeeklyIntensity+sdWeeklyIntensity), width=.1) 
     
+plotly::ggplotly(
+ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numSets,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() +geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgSets,color=as.factor(block)),linetype="dashed") )
 
-ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numSets,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() +geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=avgSets,color=as.factor(block)),linetype="dashed")
-    
-
-
-ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numReps,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=meanReps,color=as.factor(block)),linetype="dashed")# + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps+sdReps,color=as.factor(block)),linetype="dotted") #+ geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps-sdReps,color=as.factor(block)),linetype="dotted")
+plotly::ggplotly(
+ggplot(weekLevel %>% filter(group=="squatMovement"),aes(y=numReps,x=tWeek,color=as.factor(block)))+geom_line()+geom_point() + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes( yintercept=meanReps,color=as.factor(block)),linetype="dashed") )
+# + geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps+sdReps,color=as.factor(block)),linetype="dotted") #+ geom_hline(data = weekAvgs %>% filter(group=="squatMovement"),aes(yintercept=meanReps-sdReps,color=as.factor(block)),linetype="dotted")
 
 
 ```
 
-insights from comparing blocks 1 to 2 and 3...
+
+Insights from comparing blocks 1 to 2 and 3...
 
  * Block 1 had insufficient volume and there was no need to keep intensity so high.
  
